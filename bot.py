@@ -1,4 +1,5 @@
 import asyncio
+import random
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
@@ -9,7 +10,11 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 
-TOKEN = "8259954567:AAHEzRQz6qawRKshf6qAgA0Dknf6SEMniX0"
+from database import create_db, add_user, get_cases, add_cases
+
+TOKEN = "8259954567:AAEZf5Io0ycwnoo_ZLtpnwnCJfOdB_7hR8g"
+
+
 
 bot = Bot(TOKEN)
 dp = Dispatcher()
@@ -27,14 +32,28 @@ countries = {
     "kyrgyzstan": ("🇰🇬 Киргизия", "1600₸"),
     "germany": ("🇩🇪 Германия", "1600₸"),
 }
-
+DROP_CHANCES = {
+    "bangladesh": 30,
+    "usa": 15,
+    "kazakhstan": 1,
+    "uzbekistan": 20,
+    "japan": 5,
+    "yemen": 10,
+    "india": 10,
+    "france": 4,
+    "canada": 3,
+    "kyrgyzstan": 1,
+    "germany": 1,
+}
 main_menu = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="🌍 Каталог", callback_data="catalog")],
+        [InlineKeyboardButton(text="🎁 Мои кейсы", callback_data="my_cases")],
         [InlineKeyboardButton(text="💬 Поддержка", url="https://t.me/Der_shop")],
         [InlineKeyboardButton(text="ℹ️ О нас", callback_data="about")],
     ]
 )
+
 
 catalog_menu = InlineKeyboardMarkup(
     inline_keyboard=[
@@ -56,6 +75,10 @@ catalog_menu = InlineKeyboardMarkup(
 
 @dp.message(CommandStart())
 async def start(message: Message):
+    await add_user(
+    message.from_user.id,
+    message.from_user.username or ""
+)
     await message.answer(
         "🏠 <b>Добро пожаловать!</b>\n\nВыберите действие:",
         parse_mode="HTML",
@@ -120,12 +143,72 @@ async def show_country(callback: CallbackQuery):
         parse_mode="HTML",
         reply_markup=keyboard,
     )
+    
 
+@dp.callback_query(F.data == "my_cases")
+async def my_cases(callback: CallbackQuery):
+   
 
+    cases = await get_cases(callback.from_user.id)
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎲 Открыть кейс",
+                    callback_data="open_case"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data="back"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.edit_text(
+        f"🎁 У вас кейсов: <b>{cases}</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+   
+    cases = await get_cases(callback.from_user.id)
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 Открыть кейс", callback_data="open_case")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")]
+        ]
+    )
+
+@dp.callback_query(F.data == "open_case")
+async def open_case(callback: CallbackQuery):
+    cases = await get_cases(callback.from_user.id)
+
+    if cases <= 0:
+        await callback.answer("❌ У вас нет кейсов!", show_alert=True)
+        return
+
+    await add_cases(callback.from_user.id, -1)
+
+    countries_list = list(DROP_CHANCES.keys())
+    weights = list(DROP_CHANCES.values())
+
+    country = random.choices(countries_list, weights=weights, k=1)[0]
+
+    await callback.message.edit_text(
+        f"🎉 Вы открыли кейс!\n\n"
+        f"🌍 Вам выпала страна:\n\n"
+        f"<b>{countries[country][0]}</b>",
+        parse_mode="HTML"
+    )
 async def main():
-    print("Бот запускаеться...")
+    await create_db()
+    print("База данных создана")
+    print("Бот запускается...")
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
