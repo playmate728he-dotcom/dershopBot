@@ -1,10 +1,9 @@
 import asyncio
-from email import message
 import random
 
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -12,624 +11,212 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 
-from config import *
-from database import *
+from config import TOKEN, ADMIN_ID, SHOP_USERNAME, STAR_RATE
 
-# ensure delete_item is defined (some static analyzers may not detect star-imports)
-try:
-    # re-import explicitly to satisfy linters/static checkers
-    from database import delete_item  # type: ignore
-except Exception:
-    async def delete_item(item_id):
-        # fallback no-op if database does not provide it
-        return None
+from keyboards import (
+    menu,
+    stars_buy,
+    admin_buttons,
+    countries_keyboard,
+    balance_keyboard,
+)
 
-BOT_TOKEN = "8259954567:AAEZf5Io0ycwnoo_ZLtpnwnCJfOdB_7hR8g"
+from database import (
+    create_db,
+    add_user,
+    get_balance,
+    add_balance,
+    get_cases,
+    add_case,
+    remove_case,
+    add_country,
+    get_inventory,
+    remove_country,
+    use_promo,
+    create_promo,
+)
+from database import (
+    create_promo,
+    get_promo,
+    activate_promo,
+)
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
 
-bot = Bot(BOT_TOKEN)
+
+class GiveBalance(StatesGroup):
+    amount = State()
+
+
+class Promo(StatesGroup):
+    code = State()
+
+bot = Bot(TOKEN)
 dp = Dispatcher()
 
 
+
+
 COUNTRIES = {
-    "usa": ("🇺🇸 США", 500),
-    "kazakhstan": ("🇰🇿 Казахстан", 1600),
-    "uzbekistan": ("🇺🇿 Узбекистан", 900),
-    "germany": ("🇩🇪 Германия", 1600),
-    "japan": ("🇯🇵 Япония", 2000),
-
-    "kyrgyzstan": ("🇰🇬 Киргизия", 1500),
-    "tajikistan": ("🇹🇯 Таджикистан", 1000),
-    "turkmenistan": ("🇹🇲 Туркменистан", 1500),
-    "serbia": ("🇷🇸 Сербия", 1600),
-    "netherlands": ("🇳🇱 Нидерланды", 890),
-
-    "india": ("🇮🇳 Индия", 400),
-    "indonesia": ("🇮🇩 Индонезия", 500),
-    "vietnam": ("🇻🇳 Вьетнам", 670),
-    "bangladesh": ("🇧🇩 Бангладеш", 550),
-    "pakistan": ("🇵🇰 Пакистан", 540),
-
-    "philippines": ("🇵🇭 Филиппины", 490),
-    "thailand": ("🇹🇭 Таиланд", 490),
-    "egypt": ("🇪🇬 Египет", 500),
-    "nigeria": ("🇳🇬 Нигерия", 500),
-    "algeria": ("🇩🇿 Алжир", 500),
-
-    "yemen": ("🇾🇪 Йемен", 450),
-    "turkey": ("🇹🇷 Турция", 700),
+    "🇺🇸 США": 500,
+    "🇰🇿 Казахстан": 1600,
+    "🇺🇿 Узбекистан": 900,
+    "🇩🇪 Германия": 1600,
+    "🇯🇵 Япония": 2000,
+    "🇰🇬 Киргизия": 1500,
+    "🇹🇯 Таджикистан": 1000,
+    "🇹🇲 Туркменистан": 1500,
+    "🇳🇱 Нидерланды": 890,
+    "🇮🇳 Индия": 400,
+    "🇮🇩 Индонезия": 500,
+    "🇻🇳 Вьетнам": 670,
+    "🇧🇩 Бангладеш": 550,
+    "🇵🇰 Пакистан": 540,
+    "🇵🇭 Филиппины": 490,
+    "🇹🇭 Таиланд": 490,
+    "🇪🇬 Египет": 500,
+    "🇳🇬 Нигерия": 500,
+    "🇩🇿 Алжир": 500,
+    "🇾🇪 Йемен": 450,
+    "🇹🇷 Турция": 700,
+    "🇪🇹 Эфиопия": 490,
+    "🇮🇷 Иран": 750,
+    "🇨🇱 Чили": 500,
+    "🇵🇱 Польша": 1850,
+    "🇿🇦 Южная Африка": 1900,
+    "🇵🇹 Португалия": 1500,
+    "🇺🇦 Украина": 5000,
+    "🇸🇦 Саудовская Аравия": 1950,
+    "🇪🇸 Испания": 2300,
+    "🇷🇴 Румыния": 1300,
+    "🇦🇺 Австралия": 1600,
+    "🇨🇳 Китай": 11900,
 }
 
+CASE_REWARDS = {
+    "🟢 Обычный": [
+        "🇮🇳 Индия",
+        "🇮🇩 Индонезия",
+        "🇵🇰 Пакистан",
+        "🇧🇩 Бангладеш",
+        "🇻🇳 Вьетнам",
+        "🇪🇹 Эфиопия",
+        "🇹🇭 Таиланд",
+        "🇪🇬 Египет",
+    ],
 
-MAIN_MENU = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="🌍 Каталог", callback_data="catalog")],
-        [InlineKeyboardButton(text="🎁 Кейсы", callback_data="cases")],
-        [InlineKeyboardButton(text="📦 Инвентарь", callback_data="inventory")],
-        [InlineKeyboardButton(text="⬆️ Апгрейд", callback_data="upgrade")],
-        [InlineKeyboardButton(text="🎯 Квесты", callback_data="quests")],
-        [InlineKeyboardButton(text="🎟 Промокод", callback_data="promo")],
-        [InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT)],
+    "🔵 Редкий": [
+        "🇺🇸 США",
+        "🇰🇿 Казахстан",
+        "🇩🇪 Германия",
+        "🇯🇵 Япония",
+        "🇵🇹 Португалия",
+        "🇵🇱 Польша",
+        "🇹🇷 Турция",
+    ],
+
+    "🟣 Легендарный": [
+        "🇨🇳 Китай",
+        "🇺🇦 Украина",
+        "🇪🇸 Испания",
+        "🇦🇺 Австралия",
+        "🇿🇦 Южная Африка",
+        "🇸🇦 Саудовская Аравия",
     ]
-)
-
+}
 
 @dp.message(CommandStart())
 async def start(message: Message):
 
-    await add_user(
-        message.from_user.id,
-        message.from_user.username or ""
+    await add_user(message.from_user.id)
+
+    await message.answer(
+        f"""
+👋 Добро пожаловать в Der Shop!
+
+⭐ Курс:
+1⭐ = {STAR_RATE}₸
+
+Выберите действие:
+""",
+        reply_markup=menu
+    )
+
+
+@dp.message(F.text == "👤 Профиль")
+async def profile(message: Message):
+
+    balance = await get_balance(message.from_user.id)
+    cases = await get_cases(message.from_user.id)
+    inventory = await get_inventory(message.from_user.id)
+
+    await message.answer(
+        f"""
+👤 Ваш профиль
+
+🆔 ID: {message.from_user.id}
+
+💰 Баланс: {balance}₸
+
+🎁 Кейсы: {cases}
+
+🎒 Стран: {len(inventory)}
+"""
+    )
+
+
+@dp.message(F.text == "🌍 Каталог")
+async def catalog(message: Message):
+
+    await message.answer(
+        "🌍 Выберите страну:",
+        reply_markup=countries_keyboard(COUNTRIES)
+    )
+
+@dp.message(lambda message: message.text in COUNTRIES)
+async def buy_country(message: Message):
+
+    country = message.text
+    price = COUNTRIES[country]
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"💰 Купить за {price}₸",
+                    callback_data=f"buy_money|{country}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"⭐ Купить за Stars",
+                    callback_data=f"buy_star|{country}"
+                )
+            ]
+        ]
     )
 
     await message.answer(
-        "<b>🏪 Добро пожаловать в Der Shop!</b>\n\n"
-        "Выберите нужный раздел.",
-        parse_mode="HTML",
-        reply_markup=MAIN_MENU
-    )
-
-
-@dp.callback_query(F.data == "menu")
-async def menu(callback: CallbackQuery):
-
-    await callback.message.edit_text(
-        "<b>🏪 Главное меню</b>\n\n"
-        "Выберите нужный раздел.",
-        parse_mode="HTML",
-        reply_markup=MAIN_MENU
-    )
-
-
-@dp.callback_query(F.data == "profile")
-async def profile(callback: CallbackQuery):
-
-    balance = await get_balance(callback.from_user.id)
-    xp = await get_xp(callback.from_user.id)
-    level = await get_level(callback.from_user.id)
-
-    pepe, samsa, der = await get_cases(callback.from_user.id)
-
-    text = f"""
-👤 <b>Профиль</b>
-
-🆔 ID:
-<code>{callback.from_user.id}</code>
-
-💰 Баланс:
-<b>{balance}₸</b>
-
-🏆 Уровень:
-<b>{level}</b>
-
-⭐ XP:
-<b>{xp}/{LEVEL_XP}</b>
-
-🎁 Кейсы:
-
-🟢 Pepe — <b>{pepe}</b>
-
-🟡 Самса — <b>{samsa}</b>
-
-🔴 Der Der — <b>{der}</b>
-"""
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📦 Инвентарь",
-                    callback_data="inventory"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data="menu"
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
-@dp.callback_query(F.data == "catalog")
-async def catalog(callback: CallbackQuery):
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔥 Популярные",
-                    callback_data="popular"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🌍 Все страны",
-                    callback_data="all"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data="menu"
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
-        "<b>🌍 Каталог аккаунтов</b>\n\n"
-        "Выберите раздел.",
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
-
-
-@dp.callback_query(F.data == "popular")
-async def popular(callback: CallbackQuery):
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🇺🇸 США • 500₸", callback_data="country_usa")],
-            [InlineKeyboardButton(text="🇰🇿 Казахстан • 1600₸", callback_data="country_kazakhstan")],
-            [InlineKeyboardButton(text="🇺🇿 Узбекистан • 900₸", callback_data="country_uzbekistan")],
-            [InlineKeyboardButton(text="🇩🇪 Германия • 1600₸", callback_data="country_germany")],
-            [InlineKeyboardButton(text="🇯🇵 Япония • 2000₸", callback_data="country_japan")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="catalog")]
-        ]
-    )
-
-    await callback.message.edit_text(
-        "<b>🔥 Популярные аккаунты</b>",
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
-
-
-@dp.callback_query(F.data == "all")
-async def all_countries(callback: CallbackQuery):
-
-    keyboard = []
-
-    for code, (name, price) in COUNTRIES.items():
-        keyboard.append([
-            InlineKeyboardButton(
-                text=f"{name} • {price}₸",
-                callback_data=f"country_{code}"
-            )
-        ])
-
-    keyboard.append([
-        InlineKeyboardButton(
-            text="⬅️ Назад",
-            callback_data="catalog"
-        )
-    ])
-
-    await callback.message.edit_text(
-        "<b>🌍 Все страны</b>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=keyboard
-        )
-    )
-@dp.callback_query(F.data.startswith("country_"))
-async def country(callback: CallbackQuery):
-
-    code = callback.data.replace("country_", "")
-
-    if code not in COUNTRIES:
-        return
-
-    name, price = COUNTRIES[code]
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💰 Купить за баланс",
-                    callback_data=f"buy_{code}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⭐ Купить за Stars",
-                    url=SUPPORT
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬆️ Апгрейд",
-                    callback_data=f"upgrade_{code}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data="catalog"
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
         f"""
-{name}
+🌍 {country}
 
-💰 Цена:
-<b>{price}₸</b>
+💰 Цена: {price}₸
 
-⭐ Stars:
-Напишите админу после оплаты.
-
-👤 @Der_shop
+Выберите способ оплаты:
 """,
-        parse_mode="HTML",
         reply_markup=keyboard
     )
 
+@dp.callback_query(F.data.startswith("buy_money|"))
+async def buy_money(callback: CallbackQuery):
 
-@dp.callback_query(F.data.startswith("buy_"))
-async def buy_country(callback: CallbackQuery):
+    country = callback.data.split("|")[1]
 
-    code = callback.data.replace("buy_", "")
-
-    if code not in COUNTRIES:
-        return
-
-    name, price = COUNTRIES[code]
+    price = COUNTRIES[country]
 
     balance = await get_balance(callback.from_user.id)
 
     if balance < price:
-
-        await callback.answer(
-            "❌ Недостаточно средств.",
-            show_alert=True
-        )
-        return
-
-    await add_balance(
-        callback.from_user.id,
-        -price
-    )
-
-    await add_country(
-        callback.from_user.id,
-        name,
-        price
-    )
-
-    await add_xp(
-        callback.from_user.id,
-        XP_FOR_BUY
-    )
-
-    xp = await get_xp(callback.from_user.id)
-    level = await get_level(callback.from_user.id)
-
-    if xp >= LEVEL_XP:
-
-        await set_level(
-            callback.from_user.id,
-            level + 1
-        )
-
-    await callback.message.edit_text(
-        f"""
-✅ Покупка успешна!
-
-🌍 {name}
-
-💸 Списано:
-<b>{price}₸</b>
-
-⭐ +100 XP
-""",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="📦 Инвентарь",
-                        callback_data="inventory"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Меню",
-                        callback_data="menu"
-                    )
-                ]
-            ]
-        )
-    )
-@dp.callback_query(F.data == "inventory")
-async def inventory(callback: CallbackQuery):
-
-    items = await get_inventory(callback.from_user.id)
-
-    if not items:
-
-        await callback.message.edit_text(
-            """
-📦 <b>Инвентарь пуст.</b>
-
-Купите первую страну в каталоге.
-""",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="🌍 Каталог",
-                            callback_data="catalog"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text="⬅️ Меню",
-                            callback_data="menu"
-                        )
-                    ]
-                ]
-            )
-        )
-        return
-
-    keyboard = []
-
-    for item_id, country, price in items:
-
-        keyboard.append([
-            InlineKeyboardButton(
-                text=f"{country} • {price}₸",
-                callback_data=f"inv_{item_id}"
-            )
-        ])
-
-    keyboard.append([
-        InlineKeyboardButton(
-            text="⬅️ Меню",
-            callback_data="menu"
-        )
-    ])
-
-    await callback.message.edit_text(
-        "📦 <b>Ваш инвентарь</b>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=keyboard
-        )
-    )
-
-
-@dp.callback_query(F.data.startswith("inv_"))
-async def inventory_item(callback: CallbackQuery):
-
-    item_id = int(callback.data.replace("inv_", ""))
-
-    item = await get_item(item_id)
-
-    if item is None:
-        return
-
-    _, _, country, price = item
-
-    sell_price = int(price * 0.65)
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=f"💸 Продать за {sell_price}₸",
-                    callback_data=f"sell_{item_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬆️ Апгрейд",
-                    callback_data=f"upgrade_item_{item_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data="inventory"
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
-        f"""
-📦 <b>{country}</b>
-
-💰 Цена:
-
-{price}₸
-
-💸 Продажа:
-
-{sell_price}₸
-""",
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
-
-@dp.callback_query(F.data.startswith("sell_"))
-async def sell(callback: CallbackQuery):
-
-    item_id = int(callback.data.replace("sell_", ""))
-
-    reward = await sell_item(item_id)
-
-    if reward is False:
-        return
-
-    await callback.message.edit_text(
-        f"""
-✅ Продано!
-
-💰 Получено:
-
-<b>{reward}₸</b>
-""",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="📦 Инвентарь",
-                        callback_data="inventory"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🏠 Меню",
-                        callback_data="menu"
-                    )
-                ]
-            ]
-        )
-    )
-
-# ==========================
-# 🎁 КЕЙСЫ
-# ==========================
-
-@dp.callback_query(F.data == "cases")
-async def cases_menu(callback: CallbackQuery):
-
-    pepe, samsa, der = await get_cases(callback.from_user.id)
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=f"🟢 Pepe ({pepe})",
-                    callback_data="case_pepe"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"🟡 Самса ({samsa})",
-                    callback_data="case_samsa"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"🔴 Der Der ({der})",
-                    callback_data="case_der"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data="menu"
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
-        """
-🎁 <b>Кейсы</b>
-
-🟢 Pepe — 500₸ / ⭐50
-
-🟡 Самса — 750₸ / ⭐75
-
-🔴 Der Der — 1500₸ / ⭐150
-
-⭐ Для покупки за Stars
-напишите администратору.
-""",
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
-
-
-@dp.callback_query(F.data == "case_pepe")
-async def case_pepe(callback: CallbackQuery):
-
-    await callback.message.edit_text(
-        """
-🟢 <b>Pepe Case</b>
-
-Стоимость:
-
-💰 500₸
-
-⭐ 50 Stars
-
-После оплаты Stars
-напишите @Der_shop
-""",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="💰 Купить за баланс",
-                        callback_data="buy_case_pepe"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="⭐ Купить за Stars",
-                        url=SUPPORT
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🎁 Открыть",
-                        callback_data="open_pepe"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад",
-                        callback_data="cases"
-                    )
-                ]
-            ]
-        )
-    )
-@dp.callback_query(F.data == "buy_case_pepe")
-async def buy_case_pepe(callback: CallbackQuery):
-
-    ok = await buy_case_balance(
-        callback.from_user.id,
-        PEPE_PRICE
-    )
-
-    if not ok:
 
         await callback.answer(
             "❌ Недостаточно средств!",
@@ -637,260 +224,348 @@ async def buy_case_pepe(callback: CallbackQuery):
         )
         return
 
-    await add_case(
-        callback.from_user.id,
-        "pepe",
-        1
-    )
+    await add_balance(callback.from_user.id, -price)
 
-    await callback.answer(
-        "🟢 Pepe кейс куплен!"
-    )
-
-    await cases_menu(callback)
-
-
-@dp.callback_query(F.data == "open_pepe")
-async def open_pepe(callback: CallbackQuery):
-
-    pepe, samsa, der = await get_cases(callback.from_user.id)
-
-    if pepe <= 0:
-
-        await callback.answer(
-            "❌ У вас нет Pepe кейсов.",
-            show_alert=True
-        )
-        return
-
-    await remove_case(
-        callback.from_user.id,
-        "pepe"
-    )
-
-    country = random.choice(
-        
-        list(COUNTRIES.values())
-    )
-
-    name = country[0]
-    price = country[1]
-
-    await add_country(
-        callback.from_user.id,
-        name,
-        price
-    )
-
-    await add_xp(
-        callback.from_user.id,
-        XP_FOR_CASE
-    )
+    await add_country(callback.from_user.id, country)
 
     await callback.message.edit_text(
-        f"""
-🎉 Кейс открыт!
+        f"""✅ Покупка успешна!
 
-Вам выпало:
+🌍 {country}
 
-{name}
-
-💰 Стоимость:
-
-<b>{price}₸</b>
-""",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="📦 Инвентарь",
-                        callback_data="inventory"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🎁 Кейсы",
-                        callback_data="cases"
-                    )
-                ]
-            ]
-        )
-    )
-# ==========================
-# 🟡 SAMSA
-# ==========================
-
-@dp.callback_query(F.data == "buy_case_samsa")
-async def buy_case_samsa(callback: CallbackQuery):
-
-    ok = await buy_case_balance(
-        callback.from_user.id,
-        SAMSA_PRICE
+💰 Списано: {price}₸"""
     )
 
-    if not ok:
-        await callback.answer("❌ Недостаточно средств!", show_alert=True)
-        return
-
-    await add_case(callback.from_user.id, "samsa", 1)
-
-    await callback.answer("🟡 Самса кейс куплен!")
-
-    await cases_menu(callback)
+    await callback.answer()
 
 
-@dp.callback_query(F.data == "open_samsa")
-async def open_samsa(callback: CallbackQuery):
+@dp.callback_query(F.data.startswith("buy_star|"))
+async def buy_star(callback: CallbackQuery):
 
-    pepe, samsa, der = await get_cases(callback.from_user.id)
+    country = callback.data.split("|")[1]
+    price = COUNTRIES[country]
 
-    if samsa <= 0:
-        await callback.answer("❌ Нет Самса кейсов!", show_alert=True)
-        return
-
-    await remove_case(callback.from_user.id, "samsa")
-
-    country = random.choice(list(COUNTRIES.values()))
-
-    await add_country(
-        callback.from_user.id,
-        country[0],
-        country[1]
-    )
-
-    await add_xp(callback.from_user.id, XP_FOR_CASE)
-
-    await callback.message.edit_text(
-        f"""
-🎉 Самса кейс открыт!
-
-Выпало:
-
-{country[0]}
-
-💰 Цена:
-
-<b>{country[1]}₸</b>
-""",
-        parse_mode="HTML"
-    )
-
-
-# ==========================
-# 🔴 DER DER
-# ==========================
-
-@dp.callback_query(F.data == "buy_case_der")
-async def buy_case_der(callback: CallbackQuery):
-
-    ok = await buy_case_balance(
-        callback.from_user.id,
-        DER_PRICE
-    )
-
-    if not ok:
-        await callback.answer("❌ Недостаточно средств!", show_alert=True)
-        return
-
-    await add_case(callback.from_user.id, "der", 1)
-
-    await callback.answer("🔴 Der Der кейс куплен!")
-
-    await cases_menu(callback)
-
-
-@dp.callback_query(F.data == "open_der")
-async def open_der(callback: CallbackQuery):
-
-    pepe, samsa, der = await get_cases(callback.from_user.id)
-
-    if der <= 0:
-        await callback.answer("❌ Нет Der Der кейсов!", show_alert=True)
-        return
-
-    await remove_case(callback.from_user.id, "der")
-
-    country = random.choice(list(COUNTRIES.values()))
-
-    await add_country(
-        callback.from_user.id,
-        country[0],
-        country[1]
-    )
-
-    await add_xp(callback.from_user.id, XP_FOR_CASE)
-
-    await callback.message.edit_text(
-        f"""
-🎉 Der Der кейс открыт!
-
-Выпало:
-
-{country[0]}
-
-💰 Цена:
-
-<b>{country[1]}₸</b>
-""",
-        parse_mode="HTML"
-    )
-UPGRADE_ITEM = {}
-UPGRADE_TARGET = {}
-
-
-@dp.callback_query(F.data.startswith("country_"))
-async def upgrade_target(callback: CallbackQuery):
-
-    if callback.from_user.id not in UPGRADE_ITEM:
-        return
-
-    code = callback.data.replace("country_", "")
-
-    if code not in COUNTRIES:
-        return
-
-    item = await get_item(
-        UPGRADE_ITEM[callback.from_user.id]
-    )
-
-    if item is None:
-        return
-
-    item_id, user_id, old_country, old_price = item
-
-    new_country, new_price = COUNTRIES[code]
-
-    if new_price <= old_price:
-
-        await callback.answer(
-            "❌ Можно улучшать только на более дорогую страну.",
-            show_alert=True
-        )
-        return
-
-    chance = round((old_price / new_price) * 100)
-
-    if chance > 95:
-        chance = 95
-
-    if chance < 5:
-        chance = 5
-
-    UPGRADE_TARGET[callback.from_user.id] = code
+    stars = max(1, round(price / STAR_RATE))
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="⬆️ Начать апгрейд",
-                    callback_data="upgrade_start"
+                    text="✅ Выдать аккаунт",
+                    callback_data=f"give|{callback.from_user.id}|{country}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="❌ Отмена",
-                    callback_data="menu"
+                    text="❌ Отклонить",
+                    callback_data=f"deny_star|{callback.from_user.id}"
+                )
+            ]
+        ]
+    )
+
+    await bot.send_message(
+        ADMIN_ID,
+        f"""
+⭐ Новая заявка на покупку
+
+👤 @{callback.from_user.username or 'без username'}
+🆔 {callback.from_user.id}
+
+🌍 Страна:
+{country}
+
+💰 Цена:
+{price}₸
+
+⭐ К оплате:
+{stars} Stars
+
+После получения Stars нажмите
+«Выдать аккаунт».
+""",
+        reply_markup=keyboard
+    )
+
+    await callback.message.edit_text(
+        f"""
+✅ Заявка отправлена.
+
+🌍 Страна:
+{country}
+
+⭐ К оплате:
+{stars} Stars
+
+После оплаты администратор выдаст аккаунт.
+"""
+    )
+
+    await callback.answer()
+
+
+@dp.message(F.text == "💳 Пополнить баланс")
+async def balance(message: Message):
+
+    await message.answer(
+        """
+💳 Пополнение баланса
+
+Способ оплаты:
+🏦 Kaspi.kz
+  tekegram stars 
+Для пополнения напишите:
+
+👤 @Der_shop
+
+После перевода нажмите кнопку ниже.
+
+━━━━━━━━━━━━━━
+⚠️ Баланс начисляется после проверки администратором.
+""",
+        reply_markup=balance_keyboard
+    )
+
+@dp.callback_query(F.data.startswith("give|"))
+async def give_country(callback: CallbackQuery):
+
+    _, user_id, country = callback.data.split("|")
+
+    user_id = int(user_id)
+
+    await add_country(user_id, country)
+
+    await bot.send_message(
+        user_id,
+        f"""
+🎉 Покупка завершена!
+
+🌍 Вам выдана страна:
+
+{country}
+
+Спасибо за покупку ❤️
+"""
+    )
+
+    await callback.message.edit_text("✅ Аккаунт выдан.")
+
+    await callback.answer()
+
+@dp.callback_query(F.data == "balance_paid")
+async def balance_paid(callback: CallbackQuery):
+
+    await bot.send_message(
+        ADMIN_ID,
+        f"""
+🟢 Новая заявка на пополнение
+
+👤 @{callback.from_user.username}
+🆔 {callback.from_user.id}
+
+Способ:
+Kaspi.kz
+""",
+        reply_markup=admin_buttons
+    )
+
+    await callback.message.answer(
+        """
+✅ Заявка отправлена!
+
+Ожидайте проверки администратора.
+
+После подтверждения баланс будет начислен.
+"""
+    )
+
+    await callback.answer()
+
+@dp.callback_query(F.data == "approve")
+async def approve(callback: CallbackQuery, state: FSMContext):
+
+    user_id = int(callback.message.text.split("🆔 ")[1].split("\n")[0])
+
+    await state.update_data(user_id=user_id)
+
+    await callback.message.answer(
+        "💰 Введите сумму пополнения в тенге:"
+    )
+
+    await state.set_state(GiveBalance.amount)
+
+    await callback.answer()
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "deny")
+async def deny(callback: CallbackQuery):
+
+    user_id = int(callback.message.text.split("🆔 ")[1].split("\n")[0])
+
+    await bot.send_message(
+        user_id,
+        "❌ Ваша заявка отклонена."
+    )
+
+    await callback.message.edit_text("❌ Заявка отклонена.")
+
+    await callback.answer()
+
+
+@dp.message(GiveBalance.amount)
+async def give_balance(message: Message, state: FSMContext):
+
+    if not message.text.isdigit():
+        await message.answer("Введите число.")
+        return
+
+    amount = int(message.text)
+
+    data = await state.get_data()
+
+    user_id = data["user_id"]
+
+    await add_balance(user_id, amount)
+
+    await bot.send_message(
+        user_id,
+        f"✅ Ваш баланс пополнен на {amount}₸!"
+    )
+
+    await message.answer("✅ Баланс успешно выдан.")
+
+    await state.clear()
+
+@dp.message(F.text == "🎁 Кейсы")
+async def cases(message: Message):
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📦 Обычный — 600₸",
+                    callback_data="case_normal"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💎 Premium — 1500₸",
+                    callback_data="case_premium"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👑 VIP — 5000₸",
+                    callback_data="case_vip"
+                )
+            ]
+        ]
+    )
+
+    await message.answer(
+        """
+🎁 Кейсы
+
+Выберите кейс для покупки.
+""",
+        reply_markup=keyboard
+    )
+
+CASE_PRICE = {
+    "normal": 600,
+    "premium": 1500,
+    "vip": 5000,
+}
+
+CASE_CHANCE = {
+    "normal": {
+        "common": 94.50,
+        "rare": 5.00,
+        "legend": 0.45,
+        "china": 0.05,
+    },
+
+    "premium": {
+        "common": 75.00,
+        "rare": 22.00,
+        "legend": 2.70,
+        "china": 0.30,
+    },
+
+    "vip": {
+        "common": 45.00,
+        "rare": 40.00,
+        "legend": 14.00,
+        "china": 1.00,
+    }
+}
+
+COMMON = [
+    "🇮🇳 Индия",
+    "🇮🇩 Индонезия",
+    "🇵🇰 Пакистан",
+    "🇧🇩 Бангладеш",
+    "🇻🇳 Вьетнам",
+    "🇪🇹 Эфиопия",
+    "🇹🇭 Таиланд",
+    "🇪🇬 Египет",
+    "🇳🇬 Нигерия",
+    "🇩🇿 Алжир",
+    "🇾🇪 Йемен",
+    "🇨🇱 Чили",
+]
+
+RARE = [
+    "🇺🇸 США",
+    "🇰🇿 Казахстан",
+    "🇺🇿 Узбекистан",
+    "🇩🇪 Германия",
+    "🇯🇵 Япония",
+    "🇹🇷 Турция",
+    "🇵🇹 Португалия",
+    "🇵🇱 Польша",
+    "🇷🇴 Румыния",
+    "🇮🇷 Иран",
+]
+
+LEGEND = [
+    "🇦🇺 Австралия",
+    "🇪🇸 Испания",
+    "🇿🇦 Южная Африка",
+    "🇸🇦 Саудовская Аравия",
+    "🇺🇦 Украина",
+]
+
+MYTH = [
+    "🇨🇳 Китай",
+]
+
+@dp.callback_query(F.data.startswith("case_"))
+async def buy_case(callback: CallbackQuery):
+
+    case_type = callback.data.split("_")[1]
+
+    price = CASE_PRICE[case_type]
+
+    balance = await get_balance(callback.from_user.id)
+
+    if balance < price:
+        await callback.answer(
+            "❌ Недостаточно средств.",
+            show_alert=True
+        )
+        return
+
+    await add_balance(callback.from_user.id, -price)
+    await add_case(callback.from_user.id, 1)
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎁 Открыть кейс",
+                    callback_data=f"open_{case_type}"
                 )
             ]
         ]
@@ -898,286 +573,217 @@ async def upgrade_target(callback: CallbackQuery):
 
     await callback.message.edit_text(
         f"""
-⬆️ <b>Апгрейд</b>
+✅ Вы купили кейс!
 
-📦 Было:
-{old_country}
-({old_price}₸)
+📦 Тип:
+{case_type.upper()}
 
-🎯 Цель:
-{new_country}
-({new_price}₸)
-
-🎲 Шанс:
-
-<b>{chance}%</b>
+💰 Цена:
+{price}₸
 """,
-        parse_mode="HTML",
         reply_markup=keyboard
     )
-@dp.callback_query(F.data == "upgrade_start")
-async def upgrade_start(callback: CallbackQuery):
 
-    if callback.from_user.id not in UPGRADE_ITEM:
-        return
+    await callback.answer()
 
+@dp.callback_query(F.data.startswith("open_"))
+async def open_case(callback: CallbackQuery):
 
-    if callback.from_user.id not in UPGRADE_TARGET:
-        return
-    item = await get_item(
-        UPGRADE_ITEM[callback.from_user.id]
-    )
+    case_type = callback.data.split("_")[1]
 
-    if item is None:
-        return
+    cases = await get_cases(callback.from_user.id)
 
-    item_id, user_id, old_country, old_price = item
-
-    code = UPGRADE_TARGET[callback.from_user.id]
-
-    new_country, new_price = COUNTRIES[code]
-
-    chance = round((old_price / new_price) * 100)
-
-    if chance > 95:
-        chance = 95
-
-    if chance < 5:
-        chance = 5
-
-    roll = random.randint(1, 100)
-
-    await delete_item(item_id)
-
-    if roll <= chance:
-
-        await add_country(
-            callback.from_user.id,
-            new_country,
-            new_price
+    if cases <= 0:
+        await callback.answer(
+            "❌ У вас нет кейсов!",
+            show_alert=True
         )
+        return
 
-        await callback.message.edit_text(
-            f"""
-🎉 <b>АПГРЕЙД УДАЛСЯ!</b>
+    await remove_case(callback.from_user.id)
 
-📦 Было:
+    await callback.message.edit_text("🎁 Открываем кейс...")
+    await asyncio.sleep(1)
 
-{old_country}
+    await callback.message.edit_text("🎲 Крутим...")
+    await asyncio.sleep(1)
 
-⬆️ Стало:
+    await callback.message.edit_text("✨ Определяем награду...")
+    await asyncio.sleep(1)
 
-{new_country}
+    chance = CASE_CHANCE[case_type]
 
-🎲 Шанс:
+    roll = random.uniform(0, 100)
 
-{chance}%
+    if roll <= chance["china"]:
+        rarity = "💎 Мифический"
+        country = random.choice(MYTH)
 
-✅ Выпало:
+    elif roll <= chance["china"] + chance["legend"]:
+        rarity = "🟣 Легендарный"
+        country = random.choice(LEGEND)
 
-{roll}
-""",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="📦 Инвентарь",
-                            callback_data="inventory"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text="⬅️ Меню",
-                            callback_data="menu"
-                        )
-                    ]
-                ]
-            )
-        )
+    elif roll <= chance["china"] + chance["legend"] + chance["rare"]:
+        rarity = "🔵 Редкий"
+        country = random.choice(RARE)
 
     else:
-
-        await callback.message.edit_text(
-            f"""
-💥 <b>АПГРЕЙД НЕ УДАЛСЯ</b>
-
-📦
-
-{old_country}
-
-сгорел...
-
-🎲 Шанс:
-
-{chance}%
-
-❌ Выпало:
-
-{roll}
-""",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="📦 Инвентарь",
-                            callback_data="inventory"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text="⬅️ Меню",
-                            callback_data="menu"
-                        )
-                    ]
-                ]
-            )
-        )
-
-    UPGRADE_ITEM.pop(callback.from_user.id, None)
-    UPGRADE_TARGET.pop(callback.from_user.id, None)
-
-# ==========================
-# 👑 АДМИН
-# ==========================
-
-from aiogram.filters import Command
-
-
-@dp.message(Command("givebalance"))
-async def give_balance(message: Message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    args = message.text.split()
-
-    if len(args) != 3:
-        await message.answer(
-            "Использование:\n/givebalance ID сумма"
-        )
-        return
-
-    user_id = int(args[1])
-    amount = int(args[2])
-
-    await add_balance(user_id, amount)
-
-    await message.answer("✅ Баланс выдан.")
-    @dp.message(Command("givecase"))
-    async def give_case(message: Message):
-
-     if message.from_user.id != ADMIN_ID:
-        return
-
-    args = message.text.split()
-
-    if len(args) != 4:
-        await message.answer(
-            "Использование:\n"
-            "/givecase ID pepe 3"
-        )
-        return
-
-    user_id = int(args[1])
-    case_type = args[2].lower()
-    amount = int(args[3])
-
-    if case_type not in ["pepe", "samsa", "der"]:
-        await message.answer(
-            "Кейс должен быть:\n"
-            "pepe\n"
-            "samsa\n"
-            "der"
-        )
-        return
-
-    await add_case(
-        user_id,
-        case_type,
-        amount
-    )
-
-    await message.answer(
-        "✅ Кейсы успешно выданы."
-    )
-@dp.message(Command("givecountry"))
-async def give_country(message: Message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    args = message.text.split()
-
-    if len(args) != 3:
-        await message.answer(
-            "Использование:\n"
-            "/givecountry ID usa"
-        )
-        return
-
-    user_id = int(args[1])
-    code = args[2].lower()
-
-    if code not in COUNTRIES:
-        await message.answer("❌ Такой страны нет.")
-        return
-
-    country, price = COUNTRIES[code]
+        rarity = "🟢 Обычный"
+        country = random.choice(COMMON)
 
     await add_country(
-        user_id,
-        country,
-        price
+        callback.from_user.id,
+        country
     )
-
-    await message.answer(
-        f"✅ Выдано:\n{country}"
-    )
-PROMO_WAIT = set()
-BROADCAST_WAIT = set()
-@dp.callback_query(F.data == "promo")
-async def promo(callback: CallbackQuery):
-
-    PROMO_WAIT.add(callback.from_user.id)
 
     await callback.message.edit_text(
-        "🎟 Введите промокод сообщением."
+        f"""
+🎊 Кейс успешно открыт!
+
+━━━━━━━━━━━━━━
+
+⭐ Редкость:
+{rarity}
+
+🌍 Выпало:
+
+{country}
+
+🎉 Поздравляем!
+"""
     )
-@dp.message()
-async def promo_message(message: Message):
 
-    if message.from_user.id not in PROMO_WAIT:
+    await callback.answer()
+
+@dp.message(F.text == "🎒 Инвентарь")
+async def inventory(message: Message):
+
+    inv = await get_inventory(message.from_user.id)
+
+    if not inv:
+        await message.answer("🎒 Ваш инвентарь пуст.")
         return
 
-    PROMO_WAIT.remove(message.from_user.id)
+    keyboard = []
 
-    result = await activate_promo(
-        message.from_user.id,
-        message.text.strip()
-    )
+    for row in inv:
 
-    if result == "notfound":
-        await message.answer("❌ Промокод не найден.")
-        return
+        country = row[0]
 
-    if result == "used":
-        await message.answer("❌ Вы уже использовали этот промокод.")
-        return
-
-    if result == "ended":
-        await message.answer("❌ Промокод закончился.")
-        return
-
-    await add_balance(
-        message.from_user.id,
-        result
-    )
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"💸 Продать {country}",
+                callback_data=f"sell|{country}"
+            )
+        ])
 
     await message.answer(
-        f"✅ Вы получили {result}₸!"
+        "🎒 Ваш инвентарь:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=keyboard
+        )
     )
+
+@dp.callback_query(F.data.startswith("sell|"))
+async def sell_country(callback: CallbackQuery):
+
+    country = callback.data.split("|")[1]
+
+    if country not in COUNTRIES:
+        await callback.answer(
+            "❌ Ошибка.",
+            show_alert=True
+        )
+        return
+
+    price = COUNTRIES[country]
+
+    reward = int(price * 0.7)  # 70% от стоимости
+
+    await remove_country(
+        callback.from_user.id,
+        country
+    )
+
+    await add_balance(
+        callback.from_user.id,
+        reward
+    )
+
+    await callback.message.edit_text(
+        f"""
+💸 Страна успешно продана!
+
+🌍 Страна:
+{country}
+
+💰 Получено:
+{reward}₸
+
+📈 Деньги зачислены на баланс.
+"""
+    )
+
+    await callback.answer()
+
+@dp.message(F.text == "🎟 Промокод")
+
+@dp.message(Promo.code)
+async def promo_check(message: Message, state: FSMContext):
+
+    code = message.text.upper()
+
+    promo = await get_promo(code)
+
+    if not promo:
+        await message.answer("❌ Промокод не найден.")
+        await state.clear()
+        return
+
+    ok = await activate_promo(
+        message.from_user.id,
+        code
+    )
+
+    if not ok:
+        await message.answer(
+            "❌ Вы уже использовали этот промокод."
+        )
+        await state.clear()
+        return
+
+    reward = promo[1]
+    reward_type = promo[2]
+    uses = promo[3]
+
+    if uses <= 0:
+        await message.answer("❌ Промокод закончился.")
+        await state.clear()
+        return
+        await use_promo(code)
+
+    if reward_type == "money":
+        await add_balance(
+            message.from_user.id,
+            reward
+        )
+
+        await message.answer(
+            f"🎉 Промокод активирован!\n\n💰 Получено: {reward}₸"
+        )
+
+    elif reward_type == "case":
+        await add_case(
+            message.from_user.id,
+            reward
+        )
+
+        await message.answer(
+            f"🎉 Промокод активирован!\n\n🎁 Получено кейсов: {reward}"
+        )
+
+    await state.clear()
+
 @dp.message(Command("createpromo"))
 async def createpromo(message: Message):
 
@@ -1186,118 +792,50 @@ async def createpromo(message: Message):
 
     args = message.text.split()
 
-    if len(args) != 4:
+    if len(args) != 5:
         await message.answer(
-            "/createpromo CODE 500 10"
+            "Использование:\n"
+            "/createpromo КОД НАГРАДА money/case ИСПОЛЬЗОВАНИЯ"
         )
         return
 
-    code = args[1]
-
+    code = args[1].upper()
     reward = int(args[2])
+    reward_type = args[3].lower()
+    uses = int(args[4])
 
-    uses = int(args[3])
-
-    await create_promo(
-        code,
-        reward,
-        uses
-    )
-
-    await message.answer("✅ Промокод создан.")
-
-@dp.message(Command("stats"))
-async def stats(message: Message):
-
-    if message.from_user.id != ADMIN_ID:
+    if reward_type not in ("money", "case"):
+        await message.answer("Тип должен быть money или case.")
         return
 
-    users, inventory, balance, pepe, samsa, der = await get_stats()
+    try:
+        await create_promo(
+            code,
+            reward,
+            reward_type,
+            uses
+        )
 
-    await message.answer(
-        f"""
-📊 <b>Статистика Der Shop</b>
+        await message.answer(
+            f"""
+✅ Промокод создан!
 
-👥 Пользователей:
-<b>{users}</b>
+🎟 Код: {code}
+🎁 Тип: {reward_type}
+💰 Награда: {reward}
+👥 Использований: {uses}
+"""
+        )
 
-🌍 Стран:
-<b>{inventory}</b>
-
-💰 Общий баланс:
-<b>{balance}₸</b>
-
-🎁 Кейсы:
-
-🟢 Pepe:
-<b>{pepe}</b>
-
-🟡 Самса:
-<b>{samsa}</b>
-
-🔴 Der Der:
-<b>{der}</b>
-""",
-        parse_mode="HTML"
-    )
-@dp.message(Command("broadcast"))
-
-async def broadcast(message: Message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    BROADCAST_WAIT.add(message.from_user.id)
-
-    await message.answer(
-        "📢 Отправьте сообщение для рассылки."
-    )
-    @dp.message()
-    async def broadcast_send(message: Message):
-
-     if message.from_user.id not in BROADCAST_WAIT:
-        return
-
-    BROADCAST_WAIT.remove(message.from_user.id)
-
-    users = await get_all_users()
-
-    ok = 0
-    bad = 0
-
-    for user in users:
-
-        try:
-
-            await bot.send_message(
-                user[0],
-                message.html_text,
-                parse_mode="HTML"
-            )
-
-            ok += 1
-
-        except:
-
-            bad += 1
-
-    await message.answer(
-        f"""
-✅ Рассылка завершена.
-
-📨 Отправлено:
-<b>{ok}</b>
-
-❌ Ошибок:
-<b>{bad}</b>
-""",
-        parse_mode="HTML"
-    )
-import asyncio
-
+    except Exception as e:
+        await message.answer(f"❌ Ошибка:\n{e}")
+        
 async def main():
+
     await create_db()
+
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

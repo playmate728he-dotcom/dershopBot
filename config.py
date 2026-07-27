@@ -1,19 +1,12 @@
-TOKEN = "8259954567:AAEZf5Io0ycwnoo_ZLtpnwnCJfOdB_7hR8g"
+from dotenv import load_dotenv
+import os
 
-ADMIN_ID = 8889943264
+load_dotenv()
 
-SUPPORT = "https://t.me/Der_shop"
+TOKEN = os.getenv("BOT_TOKEN")
 
-XP_FOR_BUY = 100
-XP_FOR_CASE = 50
-XP_FOR_TOPUP = 500
+ADMIN_ID = 8889943264    # <-- потом заменишь на свой Telegram ID
 
-LEVEL_XP = 2000
+SHOP_USERNAME = "Der_shop"
 
-PEPE_PRICE = 500
-SAMSA_PRICE = 750
-DER_PRICE = 1500
-
-PEPE_STARS = 50
-SAMSA_STARS = 75
-DER_STARS = 150
+STAR_RATE = 5
