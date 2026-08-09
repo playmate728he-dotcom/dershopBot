@@ -9,4 +9,4 @@ ADMIN_ID = 8889943264    # <-- потом заменишь на свой Telegra
 
 SHOP_USERNAME = "Der_shop"
 
-STAR_RATE = 5
+STAR_RATE = 10
