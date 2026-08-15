@@ -1,841 +1,319 @@
 import asyncio
-import random
-
-
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart, Command
-from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
-
-from config import TOKEN, ADMIN_ID, SHOP_USERNAME, STAR_RATE
-
-from keyboards import (
-    menu,
-    stars_buy,
-    admin_buttons,
-    countries_keyboard,
-    balance_keyboard,
-)
-
-from database import (
-    create_db,
-    add_user,
-    get_balance,
-    add_balance,
-    get_cases,
-    add_case,
-    remove_case,
-    add_country,
-    get_inventory,
-    remove_country,
-    use_promo,
-    create_promo,
-)
-from database import (
-    create_promo,
-    get_promo,
-    activate_promo,
-)
+from aiogram.filters import CommandStart
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 
+from config import TOKEN, ADMIN_ID, SHOP_USERNAME
+from keyboards import menu, admin_buttons, balance_keyboard, catalog_keyboard, market_keyboard
+from database import *
 
+RUB_RATE = 6  # 1 RUB = 6 KZT
+COUNTRIES = {
+    "🇺🇸 США": 450, "🇰🇿 Казахстан": 990, "🇺🇿 Узбекистан": 700,
+    "🇩🇪 Германия": 1200, "🇯🇵 Япония": 1300, "🇰🇬 Киргизия": 1100,
+    "🇹🇯 Таджикистан": 900, "🇹🇲 Туркменистан": 1200, "🇳🇱 Нидерланды": 500,
+    "🇮🇳 Индия": 300, "🇮🇩 Индонезия": 300, "🇻🇳 Вьетнам": 500,
+    "🇧🇩 Бангладеш": 500, "🇵🇰 Пакистан": 500, "🇵🇭 Филиппины": 500,
+    "🇹🇭 Таиланд": 450, "🇪🇬 Египет": 500, "🇳🇬 Нигерия": 500,
+    "🇩🇿 Алжир": 500, "🇾🇪 Йемен": 450, "🇹🇷 Турция": 700,
+    "🇪🇹 Эфиопия": 450, "🇮🇷 Иран": 500, "🇨🇱 Чили": 500,
+    "🇵🇱 Польша": 1150, "🇿🇦 Южная Африка": 1100, "🇵🇹 Португалия": 1000,
+    "🇺🇦 Украина": 1500, "🇸🇦 Саудовская Аравия": 990, "🇪🇸 Испания": 1500,
+    "🇷🇴 Румыния": 400, "🇦🇺 Австралия": 1400, "🇨🇳 Китай": 10000,
+}
+
+class AddListing(StatesGroup):
+    country = State(); price = State()
+class MarketListing(StatesGroup):
+    country = State(); price = State()
+class Trade(StatesGroup):
+    country = State(); target = State()
 class GiveBalance(StatesGroup):
-    amount = State()
-
-
-class Promo(StatesGroup):
-    code = State()
+    user_id = State(); amount = State()
+class TopUp(StatesGroup):
+    currency = State(); amount = State()
 
 bot = Bot(TOKEN)
 dp = Dispatcher()
 
+from aiogram import BaseMiddleware
 
+class BanMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        uid = getattr(getattr(event, "from_user", None), "id", None)
+        if uid and uid != ADMIN_ID:
+            banned, reason = await get_ban(uid)
+            if banned:
+                try:
+                    await event.answer(f"🚫 Вы заблокированы.\nПричина: {reason}")
+                except Exception:
+                    pass
+                return
+        return await handler(event, data)
 
+dp.message.middleware(BanMiddleware())
+dp.callback_query.middleware(BanMiddleware())
+def rub(kzt):
+    return round(kzt / RUB_RATE)
 
-COUNTRIES = {
-    "🇺🇸 США": 500,
-    "🇰🇿 Казахстан": 1200,
-    "🇺🇿 Узбекистан": 700,
-    "🇩🇪 Германия": 1600,
-    "🇯🇵 Япония": 1700,
-    "🇰🇬 Киргизия": 1300,
-    "🇹🇯 Таджикистан": 900,
-    "🇹🇲 Туркменистан": 1200,
-    "🇳🇱 Нидерланды": 600,
-    "🇮🇳 Индия": 300,
-    "🇮🇩 Индонезия": 300,
-    "🇻🇳 Вьетнам": 600,
-    "🇧🇩 Бангладеш": 500,
-    "🇵🇰 Пакистан": 500,
-    "🇵🇭 Филиппины": 500,
-    "🇹🇭 Таиланд": 450,
-    "🇪🇬 Египет": 500,
-    "🇳🇬 Нигерия": 500,
-    "🇩🇿 Алжир": 500,
-    "🇾🇪 Йемен": 450,
-    "🇹🇷 Турция": 700,
-    "🇪🇹 Эфиопия": 450,
-    "🇮🇷 Иран": 750,
-    "🇨🇱 Чили": 500,
-    "🇵🇱 Польша": 1850,
-    "🇿🇦 Южная Африка": 1100,
-    "🇵🇹 Португалия": 1200,
-    "🇺🇦 Украина": 3000,
-    "🇸🇦 Саудовская Аравия": 1500,
-    "🇪🇸 Испания": 1800,
-    "🇷🇴 Румыния": 400,
-    "🇦🇺 Австралия": 1400,
-    "🇨🇳 Китай": 10000,
-}
-
-CASE_REWARDS = {
-    "🟢 Обычный": [
-        "🇮🇳 Индия",
-        "🇮🇩 Индонезия",
-        "🇵🇰 Пакистан",
-        "🇧🇩 Бангладеш",
-        "🇻🇳 Вьетнам",
-        "🇪🇹 Эфиопия",
-        "🇹🇭 Таиланд",
-        "🇪🇬 Египет",
-    ],
-
-    "🔵 Редкий": [
-        "🇺🇸 США",
-        "🇰🇿 Казахстан",
-        "🇩🇪 Германия",
-        "🇯🇵 Япония",
-        "🇵🇹 Португалия",
-        "🇵🇱 Польша",
-        "🇹🇷 Турция",
-    ],
-
-    "🟣 Легендарный": [
-        "🇨🇳 Китай",
-        "🇺🇦 Украина",
-        "🇪🇸 Испания",
-        "🇦🇺 Австралия",
-        "🇿🇦 Южная Африка",
-        "🇸🇦 Саудовская Аравия",
-    ]
-}
+def admin(uid): return uid == ADMIN_ID
 
 @dp.message(CommandStart())
 async def start(message: Message):
-
     await add_user(message.from_user.id)
-
-    await message.answer(
-        f"""
-👋 Добро пожаловать в Der Shop!
-
-⭐ Курс:
-1⭐ = {STAR_RATE}₸
-
-Выберите действие:
-""",
-        reply_markup=menu
-    )
-
+    await message.answer(f"👋 Der Shop\n\nКурс: 1 звезда = 10₸ / 1.5₽\n\nВыберите действие:", reply_markup=menu)
 
 @dp.message(F.text == "👤 Профиль")
 async def profile(message: Message):
-
-    balance = await get_balance(message.from_user.id)
-    cases = await get_cases(message.from_user.id)
-    inventory = await get_inventory(message.from_user.id)
-
-    await message.answer(
-        f"""
-👤 Ваш профиль
-
-🆔 ID: {message.from_user.id}
-
-💰 Баланс: {balance}₸
-
-🎁 Кейсы: {cases}
-
-🎒 Стран: {len(inventory)}
-"""
-    )
-
+    await add_user(message.from_user.id)
+    b = await get_balance(message.from_user.id)
+    inv = await get_inventory(message.from_user.id)
+    await message.answer(f"👤 Профиль\n\n🆔 {message.from_user.id}\n💰 Баланс: {b}₽\n🎒 Аккаунтов: {len(inv)}")
 
 @dp.message(F.text == "🌍 Каталог")
 async def catalog(message: Message):
-
+    # Официальный каталог: безлимитные позиции, цена задаётся админом.
+    items = [{"id": k, "country": k, "price": v} for k, v in COUNTRIES.items()]
     await message.answer(
-        "🌍 Выберите страну:",
-        reply_markup=countries_keyboard(COUNTRIES)
+        "🌍 Официальный каталог\n\n"
+        "♾ Безлимитные официальные позиции\n"
+        "💱 1₽ = 6₸\n"
+        "💎 1 звезда = 10₸ / 1.5₽",
+        reply_markup=catalog_keyboard(items, RUB_RATE)
     )
 
-@dp.message(lambda message: message.text in COUNTRIES)
-async def buy_country(message: Message):
-
-    country = message.text
-    price = COUNTRIES[country]
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=f"💰 Купить за {price}₸",
-                    callback_data=f"buy_money|{country}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"⭐ Купить за Stars",
-                    callback_data=f"buy_star|{country}"
-                )
-            ]
-        ]
+@dp.callback_query(F.data.startswith("buy_catalog|"))
+async def buy_catalog(c: CallbackQuery):
+    country = c.data.split("|",1)[1]
+    if country not in COUNTRIES:
+        return await c.answer("❌ Страна не найдена.", show_alert=True)
+    price_kzt = COUNTRIES[country]
+    price_rub = rub(price_kzt)
+    balance = await get_balance(c.from_user.id)
+    if balance < price_rub:
+        return await c.answer(f"❌ Нужно {price_rub}₽. Баланс: {balance}₽.", show_alert=True)
+    await add_balance(c.from_user.id, -price_rub)
+    await add_country(c.from_user.id, country)
+    await c.message.edit_text(
+        f"✅ Покупка успешна!\n\n🌍 {country}\n"
+        f"💰 Цена: {price_kzt}₸ / {price_rub}₽\n"
+        f"📩 Чтобы получить аккаунт, напишите @{SHOP_USERNAME}"
     )
-
-    await message.answer(
-        f"""
-🌍 {country}
-
-💰 Цена: {price}₸
-
-Выберите способ оплаты:
-""",
-        reply_markup=keyboard
-    )
-
-@dp.callback_query(F.data.startswith("buy_money|"))
-async def buy_money(callback: CallbackQuery):
-
-    country = callback.data.split("|")[1]
-
-    price = COUNTRIES[country]
-
-    balance = await get_balance(callback.from_user.id)
-
-    if balance < price:
-
-        await callback.answer(
-            "❌ Недостаточно средств!",
-            show_alert=True
-        )
-        return
-
-    await add_balance(callback.from_user.id, -price)
-
-    await add_country(callback.from_user.id, country)
-
-    await callback.message.edit_text(
-        f"""✅ Покупка успешна!
-
-🌍 {country}
-
-💰 Списано: {price}₸"""
-    )
-
-    await callback.answer()
-
-
-@dp.callback_query(F.data.startswith("buy_star|"))
-async def buy_star(callback: CallbackQuery):
-
-    country = callback.data.split("|")[1]
-    price = COUNTRIES[country]
-
-    stars = max(1, round(price / STAR_RATE))
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Выдать аккаунт",
-                    callback_data=f"give|{callback.from_user.id}|{country}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❌ Отклонить",
-                    callback_data=f"deny_star|{callback.from_user.id}"
-                )
-            ]
-        ]
-    )
-
-    await bot.send_message(
-        ADMIN_ID,
-        f"""
-⭐ Новая заявка на покупку
-
-👤 @{callback.from_user.username or 'без username'}
-🆔 {callback.from_user.id}
-
-🌍 Страна:
-{country}
-
-💰 Цена:
-{price}₸
-
-⭐ К оплате:
-{stars} Stars
-
-После получения Stars нажмите
-«Выдать аккаунт».
-""",
-        reply_markup=keyboard
-    )
-
-    await callback.message.edit_text(
-        f"""
-✅ Заявка отправлена.
-
-🌍 Страна:
-{country}
-
-⭐ К оплате:
-{stars} Stars
-
-После оплаты администратор выдаст аккаунт.
-"""
-    )
-
-    await callback.answer()
-
-
-@dp.message(F.text == "💳 Пополнить баланс")
-async def balance(message: Message):
-
-    await message.answer(
-        """
-💳 Пополнение баланса
-
-Способ оплаты:
-🏦 Kaspi.kz
-  tekegram stars 
-Для пополнения напишите:
-
-👤 @Der_shop
-
-После перевода нажмите кнопку ниже.
-
-━━━━━━━━━━━━━━
-⚠️ Баланс начисляется после проверки администратором.
-""",
-        reply_markup=balance_keyboard
-    )
-
-@dp.callback_query(F.data.startswith("give|"))
-async def give_country(callback: CallbackQuery):
-
-    _, user_id, country = callback.data.split("|")
-
-    user_id = int(user_id)
-
-    await add_country(user_id, country)
-
-    await bot.send_message(
-        user_id,
-        f"""
-🎉 Покупка завершена!
-
-🌍 Вам выдана страна:
-
-{country}
-
-Спасибо за покупку ❤️
-"""
-    )
-
-    await callback.message.edit_text("✅ Аккаунт выдан.")
-
-    await callback.answer()
-
-@dp.callback_query(F.data == "balance_paid")
-async def balance_paid(callback: CallbackQuery):
-
-    await bot.send_message(
-        ADMIN_ID,
-        f"""
-🟢 Новая заявка на пополнение
-
-👤 @{callback.from_user.username}
-🆔 {callback.from_user.id}
-
-Способ:
-Kaspi.kz
-""",
-        reply_markup=admin_buttons
-    )
-
-    await callback.message.answer(
-        """
-✅ Заявка отправлена!
-
-Ожидайте проверки администратора.
-
-После подтверждения баланс будет начислен.
-"""
-    )
-
-    await callback.answer()
-
-@dp.callback_query(F.data == "approve")
-async def approve(callback: CallbackQuery, state: FSMContext):
-
-    user_id = int(callback.message.text.split("🆔 ")[1].split("\n")[0])
-
-    await state.update_data(user_id=user_id)
-
-    await callback.message.answer(
-        "💰 Введите сумму пополнения в тенге:"
-    )
-
-    await state.set_state(GiveBalance.amount)
-
-    await callback.answer()
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "deny")
-async def deny(callback: CallbackQuery):
-
-    user_id = int(callback.message.text.split("🆔 ")[1].split("\n")[0])
-
-    await bot.send_message(
-        user_id,
-        "❌ Ваша заявка отклонена."
-    )
-
-    await callback.message.edit_text("❌ Заявка отклонена.")
-
-    await callback.answer()
-
-
-@dp.message(GiveBalance.amount)
-async def give_balance(message: Message, state: FSMContext):
-
-    if not message.text.isdigit():
-        await message.answer("Введите число.")
-        return
-
-    amount = int(message.text)
-
-    data = await state.get_data()
-
-    user_id = data["user_id"]
-
-    await add_balance(user_id, amount)
-
-    await bot.send_message(
-        user_id,
-        f"✅ Ваш баланс пополнен на {amount}₸!"
-    )
-
-    await message.answer("✅ Баланс успешно выдан.")
-
-    await state.clear()
-
-@dp.message(F.text == "🎁 Кейсы")
-async def cases(message: Message):
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📦 Обычный — 600₸",
-                    callback_data="case_normal"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💎 Premium — 1500₸",
-                    callback_data="case_premium"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="👑 VIP — 5000₸",
-                    callback_data="case_vip"
-                )
-            ]
-        ]
-    )
-
-    await message.answer(
-        """
-🎁 Кейсы
-
-Выберите кейс для покупки.
-""",
-        reply_markup=keyboard
-    )
-
-CASE_PRICE = {
-    "normal": 600,
-    "premium": 1500,
-    "vip": 5000,
-}
-
-CASE_CHANCE = {
-    "normal": {
-        "common": 94.50,
-        "rare": 5.00,
-        "legend": 0.45,
-        "china": 0.05,
-    },
-
-    "premium": {
-        "common": 75.00,
-        "rare": 22.00,
-        "legend": 2.70,
-        "china": 0.30,
-    },
-
-    "vip": {
-        "common": 45.00,
-        "rare": 40.00,
-        "legend": 14.00,
-        "china": 1.00,
-    }
-}
-
-COMMON = [
-    "🇮🇳 Индия",
-    "🇮🇩 Индонезия",
-    "🇵🇰 Пакистан",
-    "🇧🇩 Бангладеш",
-    "🇻🇳 Вьетнам",
-    "🇪🇹 Эфиопия",
-    "🇹🇭 Таиланд",
-    "🇪🇬 Египет",
-    "🇳🇬 Нигерия",
-    "🇩🇿 Алжир",
-    "🇾🇪 Йемен",
-    "🇨🇱 Чили",
-]
-
-RARE = [
-    "🇺🇸 США",
-    "🇰🇿 Казахстан",
-    "🇺🇿 Узбекистан",
-    "🇩🇪 Германия",
-    "🇯🇵 Япония",
-    "🇹🇷 Турция",
-    "🇵🇹 Португалия",
-    "🇵🇱 Польша",
-    "🇷🇴 Румыния",
-    "🇮🇷 Иран",
-]
-
-LEGEND = [
-    "🇦🇺 Австралия",
-    "🇪🇸 Испания",
-    "🇿🇦 Южная Африка",
-    "🇸🇦 Саудовская Аравия",
-    "🇺🇦 Украина",
-]
-
-MYTH = [
-    "🇨🇳 Китай",
-]
-
-@dp.callback_query(F.data.startswith("case_"))
-async def buy_case(callback: CallbackQuery):
-
-    case_type = callback.data.split("_")[1]
-
-    price = CASE_PRICE[case_type]
-
-    balance = await get_balance(callback.from_user.id)
-
-    if balance < price:
-        await callback.answer(
-            "❌ Недостаточно средств.",
-            show_alert=True
-        )
-        return
-
-    await add_balance(callback.from_user.id, -price)
-    await add_case(callback.from_user.id, 1)
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🎁 Открыть кейс",
-                    callback_data=f"open_{case_type}"
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
-        f"""
-✅ Вы купили кейс!
-
-📦 Тип:
-{case_type.upper()}
-
-💰 Цена:
-{price}₸
-""",
-        reply_markup=keyboard
-    )
-
-    await callback.answer()
-
-@dp.callback_query(F.data.startswith("open_"))
-async def open_case(callback: CallbackQuery):
-
-    case_type = callback.data.split("_")[1]
-
-    cases = await get_cases(callback.from_user.id)
-
-    if cases <= 0:
-        await callback.answer(
-            "❌ У вас нет кейсов!",
-            show_alert=True
-        )
-        return
-
-    await remove_case(callback.from_user.id)
-
-    await callback.message.edit_text("🎁 Открываем кейс...")
-    await asyncio.sleep(1)
-
-    await callback.message.edit_text("🎲 Крутим...")
-    await asyncio.sleep(1)
-
-    await callback.message.edit_text("✨ Определяем награду...")
-    await asyncio.sleep(1)
-
-    chance = CASE_CHANCE[case_type]
-
-    roll = random.uniform(0, 100)
-
-    if roll <= chance["china"]:
-        rarity = "💎 Мифический"
-        country = random.choice(MYTH)
-
-    elif roll <= chance["china"] + chance["legend"]:
-        rarity = "🟣 Легендарный"
-        country = random.choice(LEGEND)
-
-    elif roll <= chance["china"] + chance["legend"] + chance["rare"]:
-        rarity = "🔵 Редкий"
-        country = random.choice(RARE)
-
-    else:
-        rarity = "🟢 Обычный"
-        country = random.choice(COMMON)
-
-    await add_country(
-        callback.from_user.id,
-        country
-    )
-
-    await callback.message.edit_text(
-        f"""
-🎊 Кейс успешно открыт!
-
-━━━━━━━━━━━━━━
-
-⭐ Редкость:
-{rarity}
-
-🌍 Выпало:
-
-{country}
-
-🎉 Поздравляем!
-"""
-    )
-
-    await callback.answer()
+    await bot.send_message(ADMIN_ID, f"🛒 Официальная продажа\n👤 Покупатель ID: {c.from_user.id}\n🌍 {country}\n💰 {price_rub}₽\nВыдать через @{SHOP_USERNAME}")
+    await c.answer()
+
+@dp.message(F.text == "🛒 Рынок")
+async def market(message: Message):
+    items = await get_market_listings()
+    if not items: return await message.answer("🛒 Рынок пуст.")
+    await message.answer("🛒 Публичный рынок:\n\nЦену устанавливают пользователи.", reply_markup=market_keyboard(items))
+
+@dp.callback_query(F.data.startswith("market_buy|"))
+async def market_buy(c: CallbackQuery):
+    lid=int(c.data.split("|",1)[1]); item=await get_market_listing(lid)
+    if not item: return await c.answer("❌ Лот уже продан.", show_alert=True)
+    if item['user_id']==c.from_user.id: return await c.answer("❌ Нельзя купить свой лот.", show_alert=True)
+    if await get_balance(c.from_user.id) < item['price']: return await c.answer("❌ Недостаточно рублей.", show_alert=True)
+    if not await remove_market_listing(lid): return await c.answer("❌ Лот уже продан.", show_alert=True)
+    await add_balance(c.from_user.id, -item['price']); await add_balance(item['user_id'], item['price'])
+    await c.message.edit_text(f"✅ Покупка успешна!\n\n🌍 {item['country']}\n💰 {item['price']}₽\n\n📩 Чтобы получить аккаунт, напишите @{SHOP_USERNAME}")
+    await bot.send_message(item['user_id'], f"🛒 Ваш аккаунт продан!\n🌍 {item['country']}\n💰 Получено: {item['price']}₽")
+    await bot.send_message(ADMIN_ID, f"🛒 Рынок\nПродавец ID: {item['user_id']}\nПокупатель ID: {c.from_user.id}\n🌍 {item['country']}\n💰 {item['price']}₽")
+    await c.answer()
 
 @dp.message(F.text == "🎒 Инвентарь")
 async def inventory(message: Message):
+    inv=await get_inventory(message.from_user.id)
+    if not inv: return await message.answer("🎒 Инвентарь пуст.")
+    rows=[]
+    for country in [x[0] for x in inv]:
+        official=rub(COUNTRIES.get(country,0))
+        rows += [[InlineKeyboardButton(text=f"🏷 Официально — {official}₽ (-35%)", callback_data=f"official|{country}")],
+                 [InlineKeyboardButton(text=f"🛒 На рынок — {country}", callback_data=f"market_start|{country}" )],
+                 [InlineKeyboardButton(text=f"🤝 Трейд — {country}", callback_data=f"trade_start|{country}" )]]
+    await message.answer("🎒 Инвентарь:\n\n🏷 Официально: комиссия 35%\n🛒 Рынок: свою цену устанавливаете сами\n🤝 Трейд: бесплатно", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
-    inv = await get_inventory(message.from_user.id)
+@dp.callback_query(F.data.startswith("official|"))
+async def official(c: CallbackQuery):
+    country=c.data.split("|",1)[1]; inv=await get_inventory(c.from_user.id)
+    if not any(x[0]==country for x in inv): return await c.answer("❌ Нет в инвентаре.", show_alert=True)
+    gross=rub(COUNTRIES.get(country,0)); payout=round(gross*0.65)
+    await remove_country(c.from_user.id,country); await add_balance(c.from_user.id,payout)
+    await c.message.edit_text(f"✅ Официально продано\n🌍 {country}\n💰 Получено: {payout}₽\n📉 Комиссия: 35%")
 
-    if not inv:
-        await message.answer("🎒 Ваш инвентарь пуст.")
-        return
+@dp.callback_query(F.data.startswith("market_start|"))
+async def market_start(c: CallbackQuery,state:FSMContext):
+    country=c.data.split("|",1)[1]
+    if not any(x[0]==country for x in await get_inventory(c.from_user.id)): return await c.answer("❌ Нет в инвентаре.",show_alert=True)
+    await state.update_data(country=country); await state.set_state(MarketListing.price)
+    await c.message.answer(f"🛒 {country}\nВведите цену в ₽ (только целое число):"); await c.answer()
 
-    keyboard = []
+@dp.message(MarketListing.price)
+async def market_price(m:Message,state:FSMContext):
+    if not m.text.isdigit() or int(m.text)<=0: return await m.answer("Введите положительное целое число ₽.")
+    country=(await state.get_data())['country']
+    if not any(x[0]==country for x in await get_inventory(m.from_user.id)): return await m.answer("❌ Аккаунта уже нет.")
+    await remove_country(m.from_user.id,country); lid=await add_market_listing(m.from_user.id,country,int(m.text)); await state.clear()
+    await m.answer(f"✅ Выставлено на рынок!\n#{lid}\n🌍 {country}\n💰 {int(m.text)}₽\n👀 Видят все пользователи.")
 
-    for row in inv:
+@dp.callback_query(F.data.startswith("market_remove|"))
+async def market_remove(c:CallbackQuery):
+    lid=int(c.data.split("|",1)[1]); item=await get_market_listing(lid)
+    if not item or item['user_id']!=c.from_user.id: return await c.answer("❌ Лот не найден.",show_alert=True)
+    await remove_market_listing(lid); await add_country(c.from_user.id,item['country']); await c.message.edit_text("✅ Лот снят, аккаунт возвращён в инвентарь.")
 
-        country = row[0]
+@dp.callback_query(F.data.startswith("trade_start|"))
+async def trade_start(c:CallbackQuery,state:FSMContext):
+    country=c.data.split("|",1)[1]
+    if not any(x[0]==country for x in await get_inventory(c.from_user.id)): return await c.answer("❌ Нет в инвентаре.",show_alert=True)
+    await state.update_data(country=country); await state.set_state(Trade.target)
+    await c.message.answer(f"🤝 Трейд: {country}\nВведите Telegram ID получателя:"); await c.answer()
 
-        keyboard.append([
-            InlineKeyboardButton(
-                text=f"💸 Продать {country}",
-                callback_data=f"sell|{country}"
-            )
-        ])
+@dp.message(Trade.target)
+async def trade_target(m:Message,state:FSMContext):
+    if not m.text.isdigit(): return await m.answer("Введите Telegram ID числом.")
+    target=int(m.text)
+    if target==m.from_user.id: return await m.answer("❌ Нельзя трейдить самому себе.")
+    country=(await state.get_data())['country']
+    if not any(x[0]==country for x in await get_inventory(m.from_user.id)): return await m.answer("❌ Аккаунта уже нет.")
+    tid=await add_trade(m.from_user.id,target,country)
+    kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Принять",callback_data=f"trade_accept|{tid}"),InlineKeyboardButton(text="❌ Отклонить",callback_data=f"trade_decline|{tid}")]])
+    try: await bot.send_message(target,f"🤝 Трейд\n\n👤 От ID: {m.from_user.id}\n🌍 Вам предлагают: {country}",reply_markup=kb)
+    except Exception: return await m.answer("❌ Пользователь должен сначала открыть бота (/start).")
+    await m.answer("✅ Предложение отправлено."); await state.clear()
 
-    await message.answer(
-        "🎒 Ваш инвентарь:",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=keyboard
-        )
+@dp.callback_query(F.data.startswith("trade_accept|"))
+async def trade_accept(c:CallbackQuery):
+    tid=int(c.data.split("|",1)[1]); t=await get_trade(tid)
+    if not t or t['status']!='pending' or t['receiver_id']!=c.from_user.id: return await c.answer("❌ Трейд недоступен.",show_alert=True)
+    if not any(x[0]==t['sender_country'] for x in await get_inventory(t['sender_id'])): await update_trade_status(tid,'cancelled'); return await c.answer("❌ У отправителя уже нет аккаунта.",show_alert=True)
+    await remove_country(t['sender_id'],t['sender_country']); await add_country(c.from_user.id,t['sender_country']); await update_trade_status(tid,'accepted')
+    await c.message.edit_text(f"✅ Трейд принят!\n🌍 {t['sender_country']}"); await bot.send_message(t['sender_id'],f"✅ Трейд принят пользователем {c.from_user.id}.\n🌍 {t['sender_country']}"); await c.answer()
+
+@dp.callback_query(F.data.startswith("trade_decline|"))
+async def trade_decline(c:CallbackQuery):
+    tid=int(c.data.split("|",1)[1]); t=await get_trade(tid)
+    if not t or t['status']!='pending' or t['receiver_id']!=c.from_user.id: return await c.answer("❌ Трейд недоступен.",show_alert=True)
+    await update_trade_status(tid,'declined'); await c.message.edit_text("❌ Трейд отклонён."); await bot.send_message(t['sender_id'],"❌ Ваш трейд отклонён."); await c.answer()
+
+@dp.message(F.text == "💳 Пополнить баланс")
+async def topup(m:Message):
+    await m.answer(
+        "💳 Пополнение баланса\n\n"
+        "Выберите валюту пополнения:",
+        reply_markup=balance_keyboard
     )
 
-@dp.callback_query(F.data.startswith("sell|"))
-async def sell_country(callback: CallbackQuery):
+@dp.callback_query(F.data.startswith("topup_currency|"))
+async def topup_currency(c:CallbackQuery, state:FSMContext):
+    currency=c.data.split("|",1)[1]
+    if currency not in ("₽","₸","⭐","🎁 NFT"):
+        return await c.answer("❌ Неизвестная валюта.",show_alert=True)
+    await state.update_data(currency=currency)
+    await state.set_state(TopUp.amount)
+    await c.message.answer(f"💳 Пополнение: {currency}\n\nВведите сумму пополнения:")
+    await c.answer()
 
-    country = callback.data.split("|")[1]
-
-    if country not in COUNTRIES:
-        await callback.answer(
-            "❌ Ошибка.",
-            show_alert=True
-        )
-        return
-
-    price = COUNTRIES[country]
-
-    reward = int(price * 0.7)  # 70% от стоимости
-
-    await remove_country(
-        callback.from_user.id,
-        country
+@dp.message(TopUp.amount)
+async def topup_amount(m:Message,state:FSMContext):
+    if not m.text or not m.text.isdigit() or int(m.text)<=0:
+        return await m.answer("❌ Введите положительное целое число.")
+    amount=int(m.text)
+    currency=(await state.get_data())["currency"]
+    await bot.send_message(
+        ADMIN_ID,
+        f"💳 Новая заявка на пополнение\n\n"
+        f"👤 ID: {m.from_user.id}\n"
+        f"💰 Сумма: {amount}{currency}\n"
+        f"📩 Клиент: @{SHOP_USERNAME}"
     )
-
-    await add_balance(
-        callback.from_user.id,
-        reward
+    await m.answer(
+        f"✅ Заявка на пополнение оформлена!\n\n"
+        f"💰 Сумма: {amount}{currency}\n\n"
+        f"Спасибо! Напишите @{SHOP_USERNAME} для оплаты."
     )
-
-    await callback.message.edit_text(
-        f"""
-💸 Страна успешно продана!
-
-🌍 Страна:
-{country}
-
-💰 Получено:
-{reward}₸
-
-📈 Деньги зачислены на баланс.
-"""
-    )
-
-    await callback.answer()
-
-@dp.message(F.text == "🎟 Промокод")
-
-@dp.message(Promo.code)
-async def promo_check(message: Message, state: FSMContext):
-
-    code = message.text.upper()
-
-    promo = await get_promo(code)
-
-    if not promo:
-        await message.answer("❌ Промокод не найден.")
-        await state.clear()
-        return
-
-    ok = await activate_promo(
-        message.from_user.id,
-        code
-    )
-
-    if not ok:
-        await message.answer(
-            "❌ Вы уже использовали этот промокод."
-        )
-        await state.clear()
-        return
-
-    reward = promo[1]
-    reward_type = promo[2]
-    uses = promo[3]
-
-    if uses <= 0:
-        await message.answer("❌ Промокод закончился.")
-        await state.clear()
-        return
-        await use_promo(code)
-
-    if reward_type == "money":
-        await add_balance(
-            message.from_user.id,
-            reward
-        )
-
-        await message.answer(
-            f"🎉 Промокод активирован!\n\n💰 Получено: {reward}₸"
-        )
-
-    elif reward_type == "case":
-        await add_case(
-            message.from_user.id,
-            reward
-        )
-
-        await message.answer(
-            f"🎉 Промокод активирован!\n\n🎁 Получено кейсов: {reward}"
-        )
-
     await state.clear()
 
-@dp.message(Command("createpromo"))
-async def createpromo(message: Message):
+@dp.message(F.text == "➕ Выставить аккаунт")
+async def admin_add(m:Message,state:FSMContext):
+    if not admin(m.from_user.id): return
+    await m.answer("Введите страну из списка:\n"+"\n".join(COUNTRIES)); await state.set_state(AddListing.country)
 
+@dp.message(AddListing.country)
+async def admin_country(m:Message,state:FSMContext):
+    if m.text not in COUNTRIES: return await m.answer("Выберите страну из списка.")
+    await state.update_data(country=m.text); await state.set_state(AddListing.price); await m.answer(f"Введите цену в ₸ для {m.text}.")
+
+@dp.message(AddListing.price)
+async def admin_price(m:Message,state:FSMContext):
+    if not m.text.isdigit() or int(m.text)<=0: return await m.answer("Введите число.")
+    d=await state.get_data(); price=int(m.text); COUNTRIES[d['country']]=price; await state.clear(); await m.answer(f"✅ Официальная цена изменена: {d['country']} — {price}₸ / {rub(price)}₽\n♾ Теперь позиция доступна безлимитно в каталоге.")
+
+@dp.message(F.text.regexp(r'^/delete\s+\d+\s+\d+$'))
+async def admin_delete_balance(m: Message):
+    if not admin(m.from_user.id):
+        return
+    uid, amount = map(int, m.text.split()[1:])
+    balance = await get_balance(uid)
+    if amount <= 0 or amount > balance:
+        return await m.answer(f"❌ Нельзя снять {amount}₽. Баланс пользователя: {balance}₽.")
+    await add_balance(uid, -amount)
+    await m.answer(f"✅ С баланса {uid} снято {amount}₽. Новый баланс: {balance-amount}₽.")
+    try: await bot.send_message(uid, f"⚠️ С вашего баланса снято {amount}₽. Новый баланс: {balance-amount}₽.")
+    except Exception: pass
+
+@dp.message(F.text.regexp(r'^/ban\s+\d+\s+.+$'))
+async def admin_ban(m: Message):
+    if not admin(m.from_user.id): return
+    parts=m.text.split(maxsplit=2); uid=int(parts[1]); reason=parts[2].strip()
+    if uid==ADMIN_ID: return await m.answer("❌ Нельзя забанить администратора.")
+    await set_ban(uid,True,reason); await m.answer(f"🔨 Пользователь {uid} забанен.\nПричина: {reason}")
+    try: await bot.send_message(uid,f"🚫 Вы заблокированы.\nПричина: {reason}")
+    except Exception: pass
+
+@dp.message(F.text.regexp(r'^/unban\s+\d+$'))
+async def admin_unban(m: Message):
+    if not admin(m.from_user.id): return
+    uid=int(m.text.split()[1]); await set_ban(uid,False,''); await m.answer(f"✅ Пользователь {uid} разблокирован.")
+
+@dp.message(F.text.startswith("/give"))
+async def admin_give(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    args = message.text.split()
-
-    if len(args) != 5:
-        await message.answer(
-            "Использование:\n"
-            "/createpromo КОД НАГРАДА money/case ИСПОЛЬЗОВАНИЯ"
-        )
+    parts = message.text.split()
+    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+        await message.answer("Использование: /give ID сумма")
         return
 
-    code = args[1].upper()
-    reward = int(args[2])
-    reward_type = args[3].lower()
-    uses = int(args[4])
+    user_id = int(parts[1])
+    amount = int(parts[2])
 
-    if reward_type not in ("money", "case"):
-        await message.answer("Тип должен быть money или case.")
+    if amount <= 0:
+        await message.answer("❌ Сумма должна быть больше 0.")
         return
+
+    await add_balance(user_id, amount)
+
+    await message.answer(
+        f"✅ Баланс пополнен.\n\n"
+        f"👤 ID: {user_id}\n"
+        f"💰 Выдано: {amount}₽"
+    )
 
     try:
-        await create_promo(
-            code,
-            reward,
-            reward_type,
-            uses
+        await bot.send_message(
+            user_id,
+            f"💰 Вам зачислено {amount}₽ на баланс."
         )
+    except Exception:
+        pass
 
-        await message.answer(
-            f"""
-✅ Промокод создан!
 
-🎟 Код: {code}
-🎁 Тип: {reward_type}
-💰 Награда: {reward}
-👥 Использований: {uses}
-"""
-        )
 
-    except Exception as e:
-        await message.answer(f"❌ Ошибка:\n{e}")
-        
 async def main():
+    await create_db(); await dp.start_polling(bot)
 
-    await create_db()
-
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == '__main__': asyncio.run(main())
